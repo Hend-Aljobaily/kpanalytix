@@ -1538,7 +1538,6 @@ def _render_header():
                     background:rgba(255,255,255,0.08); padding:0.45rem 0.85rem;
                     border-radius:0.45rem; border:1px solid rgba(255,255,255,0.12);'>
           <div style='font-weight:600; letter-spacing:0.02em;'>{"Portfolio View \u2014 All Projects" if view_role == "Executive" else display_name(selected_building)}</div>
-          <div style='opacity:0.85;'>Week {selected_week}/{NUM_WEEKS} &middot; {week_to_label(selected_week)}</div>
         </div>
       </div>
     </div>
@@ -3034,7 +3033,6 @@ def _render_design_phase():
             # ── Branded empty-state hero ──────────────────────────────
             st.html(
                 f"<div style='text-align:center; padding:2.5rem 1rem 1.5rem;'>"
-                f"<div style='font-size:3rem; margin-bottom:0.5rem;'>&#128206;</div>"
                 f"<h2 style='color:{DEEP_PLUM}; margin:0 0 0.4rem;'>Upload an IFC Model</h2>"
                 f"<p style='color:#666; font-size:0.95rem; max-width:480px; margin:0 auto 1rem;'>"
                 f"Drag &amp; drop or browse for an <code>.ifc</code> file to run automated "
@@ -3044,23 +3042,21 @@ def _render_design_phase():
                 f"</div>"
             )
             codes_data = [
-                ("SBC 301", "Structural",  "Columns, beams, slabs &amp; walls", "&#127959;"),
-                ("SBC 801", "Fire / Life Safety", "Egress stairs, doors &amp; fire elements", "&#128293;"),
-                ("SBC 1001", "Accessibility", "Entrances, circulation &amp; clearances", "&#9855;"),
-                ("SBC 501", "MEP Systems", "Mechanical, electrical &amp; plumbing", "&#9881;"),
-                ("SBC 601", "Energy / Mostadam", "WWR, insulation &amp; envelope", "&#127807;"),
+                ("SBC 301", "Structural",  "Columns, beams, slabs &amp; walls"),
+                ("SBC 801", "Fire / Life Safety", "Egress stairs, doors &amp; fire elements"),
+                ("SBC 1001", "Accessibility", "Entrances, circulation &amp; clearances"),
+                ("SBC 501", "MEP Systems", "Mechanical, electrical &amp; plumbing"),
+                ("SBC 601", "Energy / Mostadam", "WWR, insulation &amp; envelope"),
             ]
             # 2-column grid of code cards
             cards_html = "".join(
                 f"<div style='background:white; border-left:4px solid {AMETHYST};"
                 f" padding:0.75rem 1rem; border-radius:0.5rem;"
-                f" box-shadow:0 2px 8px rgba(36,15,62,0.07); display:flex; align-items:flex-start; gap:0.6rem;'>"
-                f"<span style='font-size:1.4rem; line-height:1;'>{icon}</span>"
-                f"<div>"
+                f" box-shadow:0 2px 8px rgba(36,15,62,0.07);'>"
                 f"<b style='color:{DEEP_PLUM}; font-size:0.92rem;'>{code} — {name}</b><br>"
                 f"<span style='font-size:0.82rem; color:#555;'>{desc}</span>"
-                f"</div></div>"
-                for code, name, desc, icon in codes_data
+                f"</div>"
+                for code, name, desc in codes_data
             )
             st.html(
                 f"<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;"
@@ -3081,19 +3077,18 @@ def _render_design_phase():
 
     # ── KPI summary banner ────────────────────────────────────────
     _kpi_items = [
-        ("&#128196;", ifc_filename, "File"),
-        ("&#127960;", mi["project_name"], "Project"),
-        ("&#127970;", str(mi["storeys"]), "Storeys"),
-        ("&#128230;", f"{mi['total_products']:,}", "Products"),
-        ("&#9989;", f"{pass_count}/{total_checks}", "Checks Passed"),
+        (mi["project_name"], "Project"),
+        (mi["schema"], "Schema"),
+        (str(mi["storeys"]), "Storeys"),
+        (f"{mi['total_products']:,}", "Products"),
+        (f"{pass_count}/{total_checks}", "Checks Passed"),
     ]
     _kpi_cells = "".join(
-        f"<div style='text-align:center; min-width:100px;'>"
-        f"<div style='font-size:1.15rem;'>{icon}</div>"
+        f"<div style='text-align:center; min-width:90px;'>"
         f"<div style='font-size:1.05rem; font-weight:700; color:{DEEP_PLUM};'>{val}</div>"
         f"<div style='font-size:0.72rem; color:#888; text-transform:uppercase; letter-spacing:0.04em;'>{lbl}</div>"
         f"</div>"
-        for icon, val, lbl in _kpi_items
+        for val, lbl in _kpi_items
     )
     _score_badge = (
         f"<div style='text-align:center; min-width:110px;'>"
@@ -3112,7 +3107,7 @@ def _render_design_phase():
         f"</div>"
     )
 
-    # ── Minimal report download (top-right) ────────────────────────
+    # ── PDF report builder ────────────────────────────────────────
     def _build_compliance_pdf():
         from fpdf import FPDF
 
@@ -3122,27 +3117,23 @@ def _render_design_phase():
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=20)
         pdf.add_page()
-        # Header bar
         pdf.set_fill_color(36, 15, 62)
         pdf.rect(0, 0, 210, 28, style="F")
         pdf.set_font("Helvetica", "B", 18)
         pdf.set_text_color(255, 255, 255)
         pdf.set_y(8)
         pdf.cell(0, 10, "SBC Compliance Report", align="C", new_x="LMARGIN", new_y="NEXT")
-        # Meta
         pdf.set_y(34)
         pdf.set_text_color(60, 60, 60)
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 6, _latin1(f"Project: {mi['project_name']}  |  File: {ifc_filename}  |  {date.today().isoformat()}"), new_x="LMARGIN", new_y="NEXT")
         pdf.cell(0, 6, _latin1(f"Schema: {mi['schema']}  |  Storeys: {mi['storeys']}  |  Products: {mi['total_products']:,}"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(4)
-        # Overall score
         pdf.set_font("Helvetica", "B", 14)
         sc = (34, 197, 94) if result["overall_pass"] else (239, 68, 68)
         pdf.set_text_color(*sc)
         pdf.cell(0, 10, _latin1(f"Overall: {overall:.0f}% - {overall_label}  ({pass_count}/{total_checks} passed)"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
-        # Per-code
         for chk in result["checks"]:
             pdf.set_draw_color(*(34, 197, 94) if chk["passed"] else (239, 68, 68))
             pdf.set_line_width(0.8)
@@ -3162,125 +3153,13 @@ def _render_design_phase():
                 pdf.set_text_color(180, 50, 50)
                 pdf.cell(0, 5, _latin1(f"- {v}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(3)
-        # Footer
         pdf.set_y(-25)
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(150, 150, 150)
         pdf.cell(0, 5, "Generated by KPAnalytix Design Phase", align="C")
         return bytes(pdf.output())
 
-    # ── Section A: Compliance Summary ─────────────────────────────
-    st.markdown('<div class="sec">Compliance Analysis Results</div>', unsafe_allow_html=True)
-
-    # Overall score card with gradient + PDF button side-by-side
-    _score_col, _pdf_col = st.columns([3, 1])
-    with _score_col:
-        st.html(
-            f"<div style='background:linear-gradient(135deg, #fafafa 0%, #f3f0f7 100%);"
-            f" border-radius:0.7rem; padding:1.4rem 1.8rem;"
-            f" text-align:center; border:2px solid {overall_color};"
-            f" box-shadow:0 4px 14px rgba(36,15,62,0.10);'>"
-            f"<div style='font-size:2.2rem; font-weight:800; color:{overall_color};'>"
-            f"{overall:.0f}%</div>"
-            f"<div style='font-size:1.1rem; font-weight:700; color:{overall_color};"
-            f" letter-spacing:0.05em; margin-top:0.3rem;'>{overall_label}</div>"
-            f"<div style='font-size:0.82rem; color:#888; margin-top:0.3rem;'>"
-            f"{pass_count}/{total_checks} checks passed</div>"
-            f"<div style='font-size:0.72rem; color:#aaa; margin-top:0.5rem;'>"
-            f"Generated on {date.today().strftime('%B %d, %Y')}</div>"
-            f"</div>"
-        )
-    with _pdf_col:
-        st.download_button(
-            "📄 Export PDF Report",
-            data=_build_compliance_pdf(),
-            file_name=f"SBC_{mi['project_name']}_{date.today().isoformat()}.pdf",
-            mime="application/pdf",
-            key="design_compliance_report_dl",
-            use_container_width=True,
-        )
-
-    # ── Per-code compliance cards with progress bars ───────────────
-    st.markdown('<div class="sec">Compliance Report by SBC Code</div>', unsafe_allow_html=True)
-
-    _code_icons = {
-        "SBC 301": "&#127959;",   # structural
-        "SBC 801": "&#128293;",   # fire
-        "SBC 1001": "&#9855;",    # accessibility
-        "SBC 501": "&#9881;",     # MEP
-        "SBC 601": "&#127807;",   # energy
-    }
-    _code_recommendations = {
-        "SBC 301": "Add missing structural elements (IfcColumn, IfcBeam, IfcSlab) to define the structural frame.",
-        "SBC 801": "Model egress routes with IfcDoor and IfcStair elements per SBC fire-safety requirements.",
-        "SBC 1001": "Define IfcSpace zones and ensure accessible entrances and vertical circulation are modelled.",
-        "SBC 501": "Add MEP distribution elements (IfcPipeSegment, IfcDuctSegment, IfcFlowTerminal) to the model.",
-        "SBC 601": "Review window-to-wall ratio and add IfcCovering for insulation to meet Mostadam standards.",
-    }
-
-    for check in result["checks"]:
-        border = "#22c55e" if check["passed"] else "#ef4444"
-        bar_color = "#22c55e" if check["score"] >= 80 else ("#f59e0b" if check["score"] >= 60 else "#ef4444")
-        status_lbl = "PASS" if check["passed"] else "FAIL"
-        status_bg  = "#dcfce7" if check["passed"] else "#fee2e2"
-        status_fg  = "#166534" if check["passed"] else "#991b1b"
-        icon = _code_icons.get(check["code"], "&#128203;")
-
-        violations_html = ""
-        if check["violations"]:
-            items = "".join(
-                f"<li style='margin-bottom:0.3rem;'>{v}</li>" for v in check["violations"]
-            )
-            violations_html = (
-                f"<div style='margin-top:0.5rem; font-size:0.82rem; color:#555;'>"
-                f"<b>Violations:</b><ul style='margin:0.3rem 0 0 1.2rem; padding:0;'>"
-                f"{items}</ul></div>"
-            )
-
-        rec_html = ""
-        if not check["passed"]:
-            rec = _code_recommendations.get(check["code"], "")
-            if rec:
-                rec_html = (
-                    f"<div style='margin-top:0.6rem; padding:0.5rem 0.7rem; background:#fffbeb;"
-                    f" border-radius:0.35rem; font-size:0.8rem; color:#92400e;"
-                    f" border-left:3px solid #f59e0b;'>"
-                    f"<b>Recommended action:</b> {rec}</div>"
-                )
-
-        progress_bar = (
-            f"<div style='height:6px; background:#eee; border-radius:3px; margin-top:0.6rem;'>"
-            f"<div style='height:100%; width:{check['score']:.0f}%; background:{bar_color};"
-            f" border-radius:3px; transition:width 0.4s ease;'></div></div>"
-        )
-
-        st.html(
-            f"<div style='background:white; border-left:5px solid {border};"
-            f" padding:1rem 1.25rem; border-radius:0.55rem; margin-bottom:0.7rem;"
-            f" box-shadow:0 4px 14px rgba(36,15,62,0.08);'>"
-            f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
-            f"<div style='display:flex; align-items:center; gap:0.5rem;'>"
-            f"<span style='font-size:1.2rem;'>{icon}</span>"
-            f"<span style='font-weight:700; color:{DEEP_PLUM}; font-size:1.05rem;'>"
-            f"{check['code']}</span>"
-            f"<span style='color:#666;'>{check['name']}</span>"
-            f"</div>"
-            f"<div style='display:flex; align-items:center; gap:0.7rem;'>"
-            f"<span style='font-weight:700; color:{DEEP_PLUM}; font-size:1.1rem;'>"
-            f"{check['score']:.0f}%</span>"
-            f"<span style='background:{status_bg}; color:{status_fg}; padding:0.2rem 0.7rem;"
-            f" border-radius:1rem; font-size:0.72rem; font-weight:700;"
-            f" letter-spacing:0.04em;'>{status_lbl}</span>"
-            f"</div>"
-            f"</div>"
-            f"<div style='font-size:0.82rem; color:#888; margin-top:0.4rem;'>{check['detail']}</div>"
-            f"{progress_bar}"
-            f"{violations_html}"
-            f"{rec_html}"
-            f"</div>"
-        )
-
-    # ── Section B: 3D BIM Model ────────────────────────────────────
+    # ── 3D BIM Model (top) ─────────────────────────────────────────
     st.markdown('<div class="sec">3D BIM Model</div>', unsafe_allow_html=True)
 
     col_3d, col_info = st.columns([3, 2])
@@ -3321,29 +3200,128 @@ def _render_design_phase():
         with info_b:
             st.markdown(kpi(f"{mi['total_products']:,}", "Products"), unsafe_allow_html=True)
 
-    # ── Section C: Export & Integration ─────────────────────────────
-    st.markdown('<div class="sec">Export &amp; Integration</div>', unsafe_allow_html=True)
+    # ── Compliance Analysis Results ────────────────────────────────
+    st.markdown('<div class="sec">Compliance Analysis Results</div>', unsafe_allow_html=True)
 
-    _cad_cards = "".join(
-        f"<div style='background:white; padding:0.6rem 0.9rem; border-radius:0.45rem;"
-        f" box-shadow:0 1px 4px rgba(36,15,62,0.06); text-align:center; min-width:130px;'>"
-        f"<b style='color:{DEEP_PLUM}; font-size:0.88rem;'>{tool['name']}</b><br>"
-        f"<span style='font-size:0.75rem; color:#666;'>{tool['blurb']}</span>"
-        f"</div>"
-        for tool in CAD_TOOLS
-    )
-    st.html(
-        f"<div style='display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.8rem;'>"
-        f"{_cad_cards}</div>"
-    )
-    st.download_button(
-        "⬇ Download IFC File",
-        data=ifc_bytes,
-        file_name=ifc_filename,
-        mime="application/octet-stream",
-        key="design_phase_ifc_download",
-        use_container_width=True,
-    )
+    # Overall score card with PDF button
+    _score_col, _pdf_col = st.columns([3, 1])
+    with _score_col:
+        st.html(
+            f"<div style='background:linear-gradient(135deg, #fafafa 0%, #f3f0f7 100%);"
+            f" border-radius:0.7rem; padding:1.4rem 1.8rem;"
+            f" text-align:center; border:2px solid {overall_color};"
+            f" box-shadow:0 4px 14px rgba(36,15,62,0.10);'>"
+            f"<div style='font-size:2.2rem; font-weight:800; color:{overall_color};'>"
+            f"{overall:.0f}%</div>"
+            f"<div style='font-size:1.1rem; font-weight:700; color:{overall_color};"
+            f" letter-spacing:0.05em; margin-top:0.3rem;'>{overall_label}</div>"
+            f"<div style='font-size:0.82rem; color:#888; margin-top:0.3rem;'>"
+            f"{pass_count}/{total_checks} checks passed</div>"
+            f"<div style='font-size:0.72rem; color:#aaa; margin-top:0.5rem;'>"
+            f"Generated on {date.today().strftime('%B %d, %Y')}</div>"
+            f"</div>"
+        )
+    with _pdf_col:
+        st.download_button(
+            "Export PDF Report",
+            data=_build_compliance_pdf(),
+            file_name=f"SBC_{mi['project_name']}_{date.today().isoformat()}.pdf",
+            mime="application/pdf",
+            key="design_compliance_report_dl",
+            use_container_width=True,
+        )
+
+    # Per-code compliance cards
+    st.markdown('<div class="sec">Compliance Report by SBC Code</div>', unsafe_allow_html=True)
+
+    _code_recommendations = {
+        "SBC 301": "Add missing structural elements (IfcColumn, IfcBeam, IfcSlab) to define the structural frame.",
+        "SBC 801": "Model egress routes with IfcDoor and IfcStair elements per SBC fire-safety requirements.",
+        "SBC 1001": "Define IfcSpace zones and ensure accessible entrances and vertical circulation are modelled.",
+        "SBC 501": "Add MEP distribution elements (IfcPipeSegment, IfcDuctSegment, IfcFlowTerminal) to the model.",
+        "SBC 601": "Review window-to-wall ratio and add IfcCovering for insulation to meet Mostadam standards.",
+    }
+
+    for check in result["checks"]:
+        border = "#22c55e" if check["passed"] else "#ef4444"
+        bar_color = "#22c55e" if check["score"] >= 80 else ("#f59e0b" if check["score"] >= 60 else "#ef4444")
+        status_lbl = "PASS" if check["passed"] else "FAIL"
+        status_bg  = "#dcfce7" if check["passed"] else "#fee2e2"
+        status_fg  = "#166534" if check["passed"] else "#991b1b"
+
+        violations_html = ""
+        if check["violations"]:
+            items = "".join(
+                f"<li style='margin-bottom:0.3rem;'>{v}</li>" for v in check["violations"]
+            )
+            violations_html = (
+                f"<div style='margin-top:0.5rem; font-size:0.82rem; color:#555;'>"
+                f"<b>Violations:</b><ul style='margin:0.3rem 0 0 1.2rem; padding:0;'>"
+                f"{items}</ul></div>"
+            )
+
+        rec_html = ""
+        if not check["passed"]:
+            rec = _code_recommendations.get(check["code"], "")
+            if rec:
+                rec_html = (
+                    f"<div style='margin-top:0.6rem; padding:0.5rem 0.7rem; background:#fffbeb;"
+                    f" border-radius:0.35rem; font-size:0.8rem; color:#92400e;"
+                    f" border-left:3px solid #f59e0b;'>"
+                    f"<b>Recommended action:</b> {rec}</div>"
+                )
+
+        progress_bar = (
+            f"<div style='height:6px; background:#eee; border-radius:3px; margin-top:0.6rem;'>"
+            f"<div style='height:100%; width:{check['score']:.0f}%; background:{bar_color};"
+            f" border-radius:3px; transition:width 0.4s ease;'></div></div>"
+        )
+
+        st.html(
+            f"<div style='background:white; border-left:5px solid {border};"
+            f" padding:1rem 1.25rem; border-radius:0.55rem; margin-bottom:0.7rem;"
+            f" box-shadow:0 4px 14px rgba(36,15,62,0.08);'>"
+            f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+            f"<div>"
+            f"<span style='font-weight:700; color:{DEEP_PLUM}; font-size:1.05rem;'>"
+            f"{check['code']}</span>"
+            f"<span style='color:#666; margin-left:0.5rem;'>{check['name']}</span>"
+            f"</div>"
+            f"<div style='display:flex; align-items:center; gap:0.7rem;'>"
+            f"<span style='font-weight:700; color:{DEEP_PLUM}; font-size:1.1rem;'>"
+            f"{check['score']:.0f}%</span>"
+            f"<span style='background:{status_bg}; color:{status_fg}; padding:0.2rem 0.7rem;"
+            f" border-radius:1rem; font-size:0.72rem; font-weight:700;"
+            f" letter-spacing:0.04em;'>{status_lbl}</span>"
+            f"</div>"
+            f"</div>"
+            f"<div style='font-size:0.82rem; color:#888; margin-top:0.4rem;'>{check['detail']}</div>"
+            f"{progress_bar}"
+            f"{violations_html}"
+            f"{rec_html}"
+            f"</div>"
+        )
+
+    # ── Export ──────────────────────────────────────────────────────
+    _exp_dl, _exp_info = st.columns([1, 3])
+    with _exp_dl:
+        st.download_button(
+            "Download IFC",
+            data=ifc_bytes,
+            file_name=ifc_filename,
+            mime="application/octet-stream",
+            key="design_phase_ifc_download",
+            use_container_width=True,
+        )
+    with _exp_info:
+        _tools_text = " &nbsp;&middot;&nbsp; ".join(
+            f"<b>{t['name']}</b>" for t in CAD_TOOLS
+        )
+        st.html(
+            f"<div style='font-size:0.82rem; color:#666; padding:0.5rem 0;'>"
+            f"Open in: {_tools_text}"
+            f"</div>"
+        )
 
 
 

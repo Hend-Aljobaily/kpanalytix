@@ -3190,32 +3190,32 @@ def _render_design_phase():
             st.info("No renderable geometry found in this IFC file.")
 
     with col_info:
-        st.markdown('<div class="sec">Open in CAD</div>', unsafe_allow_html=True)
-        _cad_actions = [
-            ("Autodesk Revit", "File → Open → select the downloaded .ifc",
-             "Best for architectural editing and BIM coordination"),
-            ("AutoCAD Architecture", "Insert tab → Import → IFC format",
-             "Ideal for 2D drafting and structural detailing"),
-            ("Solibri / BIM Vision", "File → Open Model → .ifc",
-             "Free viewers for model review and clash detection"),
-        ]
-        for _name, _how, _desc in _cad_actions:
-            st.html(
-                f"<div style='background:white; border-left:3px solid {AMETHYST};"
-                f" padding:0.6rem 0.8rem; border-radius:0.4rem; margin-bottom:0.5rem;"
-                f" box-shadow:0 2px 6px rgba(36,15,62,0.06);'>"
-                f"<div style='font-weight:700; color:{DEEP_PLUM}; font-size:0.9rem;'>{_name}</div>"
-                f"<div style='font-size:0.78rem; color:#555; margin-top:0.15rem;'>{_how}</div>"
-                f"<div style='font-size:0.72rem; color:#888; margin-top:0.1rem;'>{_desc}</div>"
-                f"</div>"
-            )
+        st.markdown('<div class="sec">Edit Model</div>', unsafe_allow_html=True)
         st.download_button(
-            "Download IFC to Edit",
+            "Download IFC",
             data=ifc_bytes,
             file_name=ifc_filename,
             mime="application/octet-stream",
             key="design_phase_ifc_download_cad",
             use_container_width=True,
+        )
+        _apps = [
+            ("Revit", "BIM Authoring"),
+            ("AutoCAD", "2D / 3D Drafting"),
+            ("Navisworks", "Clash Detection"),
+            ("Solibri", "Model Checking"),
+        ]
+        _pills = " ".join(
+            f"<span style='display:inline-block; background:{DEEP_PLUM}; color:white;"
+            f" padding:0.3rem 0.7rem; border-radius:1rem; font-size:0.75rem;"
+            f" font-weight:600; margin:0.15rem 0.1rem;'>{n}</span>"
+            for n, _ in _apps
+        )
+        st.html(
+            f"<div style='margin-top:0.6rem;'>"
+            f"<div style='font-size:0.78rem; color:#888; margin-bottom:0.35rem;'>Compatible with</div>"
+            f"<div>{_pills}</div>"
+            f"</div>"
         )
 
     # ── Compliance Analysis Results ────────────────────────────────

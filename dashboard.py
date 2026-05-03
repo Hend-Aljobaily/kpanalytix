@@ -3077,31 +3077,29 @@ def _render_design_phase():
 
     # ── KPI summary banner ────────────────────────────────────────
     _kpi_items = [
-        (mi["project_name"], "Project"),
-        (mi["schema"], "Schema"),
         (str(mi["storeys"]), "Storeys"),
         (f"{mi['total_products']:,}", "Products"),
         (f"{pass_count}/{total_checks}", "Checks Passed"),
     ]
     _kpi_cells = "".join(
-        f"<div style='text-align:center; min-width:90px;'>"
-        f"<div style='font-size:1.05rem; font-weight:700; color:{DEEP_PLUM};'>{val}</div>"
-        f"<div style='font-size:0.72rem; color:#888; text-transform:uppercase; letter-spacing:0.04em;'>{lbl}</div>"
+        f"<div style='text-align:center; min-width:100px;'>"
+        f"<div style='font-size:1.4rem; font-weight:700; color:{DEEP_PLUM};'>{val}</div>"
+        f"<div style='font-size:0.78rem; color:#888; text-transform:uppercase; letter-spacing:0.04em;'>{lbl}</div>"
         f"</div>"
         for val, lbl in _kpi_items
     )
     _score_badge = (
-        f"<div style='text-align:center; min-width:110px;'>"
-        f"<div style='font-size:1.6rem; font-weight:800; color:{overall_color};'>{overall:.0f}%</div>"
+        f"<div style='text-align:center; min-width:120px;'>"
+        f"<div style='font-size:1.8rem; font-weight:800; color:{overall_color};'>{overall:.0f}%</div>"
         f"<div style='display:inline-block; background:{overall_color}; color:white;"
-        f" padding:0.15rem 0.6rem; border-radius:1rem; font-size:0.7rem;"
+        f" padding:0.2rem 0.7rem; border-radius:1rem; font-size:0.75rem;"
         f" font-weight:700; letter-spacing:0.04em;'>{overall_label}</div>"
         f"</div>"
     )
     st.html(
         f"<div style='display:flex; justify-content:space-between; align-items:center;"
-        f" flex-wrap:wrap; gap:0.8rem; background:white; border-radius:0.7rem;"
-        f" padding:1rem 1.5rem; margin-bottom:1rem;"
+        f" flex-wrap:wrap; gap:1rem; background:white; border-radius:0.7rem;"
+        f" padding:1.1rem 1.8rem; margin-bottom:1rem;"
         f" box-shadow:0 2px 10px rgba(36,15,62,0.08); border:1px solid #eee;'>"
         f"{_kpi_cells}{_score_badge}"
         f"</div>"
@@ -3192,13 +3190,33 @@ def _render_design_phase():
             st.info("No renderable geometry found in this IFC file.")
 
     with col_info:
-        st.markdown(kpi(mi["project_name"], "Project"), unsafe_allow_html=True)
-        info_a, info_b = st.columns(2)
-        with info_a:
-            st.markdown(kpi(mi["schema"], "Schema"), unsafe_allow_html=True)
-            st.markdown(kpi(mi["storeys"], "Storeys"), unsafe_allow_html=True)
-        with info_b:
-            st.markdown(kpi(f"{mi['total_products']:,}", "Products"), unsafe_allow_html=True)
+        st.markdown('<div class="sec">Open in CAD</div>', unsafe_allow_html=True)
+        _cad_actions = [
+            ("Autodesk Revit", "File → Open → select the downloaded .ifc",
+             "Best for architectural editing and BIM coordination"),
+            ("AutoCAD Architecture", "Insert tab → Import → IFC format",
+             "Ideal for 2D drafting and structural detailing"),
+            ("Solibri / BIM Vision", "File → Open Model → .ifc",
+             "Free viewers for model review and clash detection"),
+        ]
+        for _name, _how, _desc in _cad_actions:
+            st.html(
+                f"<div style='background:white; border-left:3px solid {AMETHYST};"
+                f" padding:0.6rem 0.8rem; border-radius:0.4rem; margin-bottom:0.5rem;"
+                f" box-shadow:0 2px 6px rgba(36,15,62,0.06);'>"
+                f"<div style='font-weight:700; color:{DEEP_PLUM}; font-size:0.9rem;'>{_name}</div>"
+                f"<div style='font-size:0.78rem; color:#555; margin-top:0.15rem;'>{_how}</div>"
+                f"<div style='font-size:0.72rem; color:#888; margin-top:0.1rem;'>{_desc}</div>"
+                f"</div>"
+            )
+        st.download_button(
+            "Download IFC to Edit",
+            data=ifc_bytes,
+            file_name=ifc_filename,
+            mime="application/octet-stream",
+            key="design_phase_ifc_download_cad",
+            use_container_width=True,
+        )
 
     # ── Compliance Analysis Results ────────────────────────────────
     st.markdown('<div class="sec">Compliance Analysis Results</div>', unsafe_allow_html=True)

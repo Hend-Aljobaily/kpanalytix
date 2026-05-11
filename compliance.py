@@ -8,15 +8,14 @@ download-edit-reverify workflow for CAD integration.
 """
 from __future__ import annotations
 
-import base64
 import os
 import tempfile
 from datetime import date
 from pathlib import Path
 
 import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="Construction Compliance",
@@ -461,159 +460,139 @@ def build_compliance_pdf(result, filename):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3D VIEWER (IFC.js via Three.js)
+# 3D VIEWER (Plotly Mesh3d)
 # ═══════════════════════════════════════════════════════════════════════════
-def render_ifc_viewer(ifc_bytes: bytes, height: int = 600):
-    """Embed an interactive 3D IFC viewer using Three.js + web-ifc-three."""
-    ifc_b64 = base64.b64encode(ifc_bytes).decode("ascii")
+TYPE_COLORS = {
+    # Structural
+    "IfcWall": "#f1ece2", "IfcWallStandardCase": "#f1ece2",
+    "IfcSlab": "#b8b3c8", "IfcColumn": "#7a7397", "IfcBeam": "#9a93b5",
+    "IfcRoof": "#9c4a2a", "IfcDoor": "#6b4a2b", "IfcWindow": "#4ea3d6",
+    "IfcStair": "#caa97a", "IfcRailing": "#4a4a55",
+    "IfcCovering": "#d8c39a", "IfcPlate": "#a39db0",
+    "IfcFurnishingElement": "#b8a78c",
+    # MEP — Pipes (blue tones)
+    "IfcPipeSegment": "#2196F3", "IfcPipeFitting": "#1976D2",
+    # MEP — Ducts (gray tones)
+    "IfcDuctSegment": "#78909C", "IfcDuctFitting": "#607D8B",
+    # MEP — Flow / Distribution
+    "IfcFlowSegment": "#26A69A", "IfcFlowTerminal": "#00897B",
+    "IfcFlowFitting": "#00796B",
+    "IfcDistributionElement": "#546E7A",
+    "IfcEnergyConversionDevice": "#FF7043",
+    # MEP — Electrical (yellow/amber tones)
+    "IfcLightFixture": "#FFD54F", "IfcOutlet": "#FFCA28",
+    "IfcSwitchingDevice": "#FFC107",
+}
 
-    html_code = f"""
-    <div id="ifc-viewer" style="width:100%;height:{height}px;border-radius:0.5rem;
-         overflow:hidden;background:#1a1025;position:relative;">
-      <div id="ifc-loading" style="position:absolute;top:50%;left:50%;
-           transform:translate(-50%,-50%);color:#b5a4d6;font-family:sans-serif;
-           font-size:0.9rem;text-align:center;">
-        Loading 3D model...<br>
-        <div style="margin-top:0.8rem;width:40px;height:40px;border:3px solid #442270;
-             border-top:3px solid #b5a4d6;border-radius:50%;animation:spin 1s linear infinite;
-             display:inline-block;"></div>
-      </div>
-    </div>
-    <style>@keyframes spin {{ 0%{{transform:rotate(0)}} 100%{{transform:rotate(360deg)}} }}</style>
+_VIEWER_TYPES = set(TYPE_COLORS.keys())
 
-    <script type="importmap">
-    {{
-      "imports": {{
-        "three": "https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.0/examples/jsm/"
-      }}
-    }}
-    </script>
-    <script type="module">
-      import * as THREE from 'three';
-      import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
 
-      const container = document.getElementById('ifc-viewer');
-      const loadingEl = document.getElementById('ifc-loading');
+@st.cache_data(show_spinner="Extracting 3D geometry...")
+def extract_geometry(ifc_bytes: bytes) -> list:
+    """Extract 3D meshes from raw IFC bytes using ifcopenshell.geom."""
+    import ifcopenshell
+    import ifcopenshell.geom
 
-      // Scene
-      const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x1a1025);
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ifc")
+    tmp.write(ifc_bytes)
+    tmp.close()
+    try:
+        model = ifcopenshell.open(tmp.name)
+        settings = ifcopenshell.geom.settings()
+        settings.set(settings.USE_WORLD_COORDS, True)
 
-      // Camera
-      const camera = new THREE.PerspectiveCamera(
-        45, container.clientWidth / container.clientHeight, 0.1, 1000
-      );
-      camera.position.set(15, 15, 15);
+        products = [p for p in model.by_type("IfcProduct") if p.is_a() in _VIEWER_TYPES]
 
-      // Renderer
-      const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-      renderer.setSize(container.clientWidth, container.clientHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.2;
-      container.appendChild(renderer.domElement);
+        elements = []
+        for product in products:
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, product)
+                verts_flat = np.array(shape.geometry.verts, dtype=np.float32)
+                faces_flat = np.array(shape.geometry.faces, dtype=np.int32)
+                if len(verts_flat) == 0:
+                    continue
+                verts = verts_flat.reshape(-1, 3)
+                faces = faces_flat.reshape(-1, 3)
+                if len(verts) > 4000:
+                    step = max(1, len(verts) // 4000)
+                    keep = np.zeros(len(verts), dtype=bool)
+                    keep[::step] = True
+                    idx_map = np.full(len(verts), -1, dtype=np.int64)
+                    idx_map[np.where(keep)[0]] = np.arange(keep.sum())
+                    verts = verts[keep]
+                    valid = np.all(idx_map[faces] >= 0, axis=1)
+                    faces = idx_map[faces[valid]]
+                if len(faces) == 0:
+                    continue
+                elements.append({
+                    "type": product.is_a(),
+                    "name": product.Name or product.is_a(),
+                    "verts": verts,
+                    "faces": faces,
+                })
+            except Exception:
+                continue
+        return elements
+    finally:
+        os.unlink(tmp.name)
 
-      // Controls
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.08;
 
-      // Lighting
-      const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-      scene.add(ambient);
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-      dirLight.position.set(15, 25, 15);
-      dirLight.castShadow = true;
-      scene.add(dirLight);
-      const hemi = new THREE.HemisphereLight(0xF9F4FF, 0x240F3E, 0.35);
-      scene.add(hemi);
+def build_3d_figure(elements: list, height: int = 580):
+    """Build a Plotly Mesh3d figure from extracted geometry elements."""
+    if not elements:
+        return None
 
-      // Grid
-      const grid = new THREE.GridHelper(50, 50, 0x442270, 0x2e1648);
-      grid.position.y = -0.01;
-      scene.add(grid);
+    fig = go.Figure()
 
-      // Load IFC via web-ifc-three
-      async function loadModel() {{
-        try {{
-          const {{ IFCLoader }} = await import(
-            'https://cdn.jsdelivr.net/npm/web-ifc-three@0.0.126/IFCLoader.js'
-          );
+    for elem in elements:
+        verts = elem["verts"]
+        faces = elem["faces"]
+        color = TYPE_COLORS.get(elem["type"], "#D3D3D3")
+        hover = (
+            f"<b>{elem['name']}</b><br>"
+            f"Type: {elem['type'].replace('Ifc', '')}"
+            "<extra></extra>"
+        )
+        fig.add_trace(go.Mesh3d(
+            x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
+            i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+            color=color, opacity=0.92, flatshading=True,
+            lighting=dict(ambient=0.58, diffuse=0.82, specular=0.16,
+                          roughness=0.7, fresnel=0.15),
+            lightposition=dict(x=120, y=200, z=300),
+            hovertemplate=hover, showlegend=False,
+        ))
 
-          const ifcLoader = new IFCLoader();
-          await ifcLoader.ifcManager.setWasmPath(
-            'https://cdn.jsdelivr.net/npm/web-ifc@0.0.44/', true
-          );
+    # Ground plane
+    all_v = np.vstack([e["verts"] for e in elements])
+    xmin, xmax = all_v[:, 0].min() - 4, all_v[:, 0].max() + 4
+    ymin, ymax = all_v[:, 1].min() - 4, all_v[:, 1].max() + 4
+    z_ground = all_v[:, 2].min() - 0.05
+    fig.add_trace(go.Mesh3d(
+        x=[xmin, xmax, xmax, xmin], y=[ymin, ymin, ymax, ymax],
+        z=[z_ground] * 4, i=[0, 0], j=[1, 2], k=[2, 3],
+        color=LILAC_HAZE, opacity=0.6, hoverinfo="skip", showlegend=False,
+        flatshading=True, lighting=dict(ambient=0.92, diffuse=0.3),
+    ))
 
-          // Decode base64
-          const binaryString = atob("{ifc_b64}");
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {{
-            bytes[i] = binaryString.charCodeAt(i);
-          }}
-          const blob = new Blob([bytes], {{ type: 'application/octet-stream' }});
-          const url = URL.createObjectURL(blob);
-
-          ifcLoader.load(url, (ifcModel) => {{
-            scene.add(ifcModel);
-            ifcModel.castShadow = true;
-            ifcModel.receiveShadow = true;
-
-            // Auto-fit camera
-            const box = new THREE.Box3().setFromObject(ifcModel);
-            const center = box.getCenter(new THREE.Vector3());
-            const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            camera.position.copy(
-              center.clone().add(new THREE.Vector3(maxDim * 1.2, maxDim * 0.9, maxDim * 1.2))
-            );
-            controls.target.copy(center);
-            controls.update();
-            grid.position.y = box.min.y - 0.01;
-
-            loadingEl.style.display = 'none';
-            URL.revokeObjectURL(url);
-          }},
-          (progress) => {{
-            if (progress.total > 0) {{
-              const pct = Math.round((progress.loaded / progress.total) * 100);
-              loadingEl.innerHTML = 'Loading 3D model... ' + pct + '%';
-            }}
-          }},
-          (error) => {{
-            console.error('IFC load error:', error);
-            loadingEl.innerHTML = '<span style="color:#ef4444;">Could not load 3D model.<br>The file may be too large or use an unsupported schema.</span>';
-          }});
-        }} catch (e) {{
-          console.error('Viewer init error:', e);
-          loadingEl.innerHTML = '<span style="color:#ef4444;">3D viewer unavailable.<br>Check browser compatibility.</span>';
-        }}
-      }}
-
-      loadModel();
-
-      // Animation loop
-      function animate() {{
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-      }}
-      animate();
-
-      // Resize
-      window.addEventListener('resize', () => {{
-        const w = container.clientWidth;
-        const h = container.clientHeight;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setSize(w, h);
-      }});
-    </script>
-    """
-    components.html(html_code, height=height + 20, scrolling=False)
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(visible=False), yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            aspectmode="data",
+            camera=dict(
+                eye=dict(x=1.45, y=-1.55, z=1.05),
+                center=dict(x=0, y=0, z=0),
+                up=dict(x=0, y=0, z=1),
+                projection=dict(type="perspective"),
+            ),
+            bgcolor=LILAC_HAZE,
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=height,
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -667,7 +646,7 @@ with st.sidebar:
     st.divider()
     st.html(
         f"<div style='font-size:0.7rem; color:rgba(255,255,255,0.4); text-align:center;"
-        f" padding:0.5rem 0;'>Powered by ifcopenshell + IFC.js</div>"
+        f" padding:0.5rem 0;'>Powered by ifcopenshell + Plotly</div>"
     )
 
 
@@ -790,7 +769,13 @@ st.markdown('<div class="sec">3D BIM Model</div>', unsafe_allow_html=True)
 col_viewer, col_edit = st.columns([3, 1])
 
 with col_viewer:
-    render_ifc_viewer(ifc_bytes, height=580)
+    geo = extract_geometry(ifc_bytes)
+    if geo:
+        fig_3d = build_3d_figure(geo, height=580)
+        if fig_3d:
+            st.plotly_chart(fig_3d, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.info("No renderable geometry found in this IFC model.")
 
 with col_edit:
     st.markdown('<div class="sec">Edit Model</div>', unsafe_allow_html=True)

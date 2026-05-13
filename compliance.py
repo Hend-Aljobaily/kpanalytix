@@ -1,10 +1,11 @@
 """
-Construction Compliance Checker -- Saudi Building Code (SBC)
+Construction Compliance Checker
 
 Standalone Streamlit application for analyzing IFC building models
-against Saudi Building Code requirements. Features interactive 3D BIM
-viewer with MEP system visualization, layer controls, automated
-compliance analysis, and PDF reporting.
+against Saudi Building Code (SBC) and Austrian Building Code (OIB)
+requirements. Features interactive 3D BIM viewer with MEP system
+visualization, layer controls, automated compliance analysis,
+multi-country/region support, and PDF reporting.
 """
 from __future__ import annotations
 
@@ -47,13 +48,97 @@ SAMPLE_MODELS = {
     "Tall Building": "TallBuilding.ifc",
 }
 
+# ---------------------------------------------------------------------------
+# MULTI-COUNTRY CONFIG
+# ---------------------------------------------------------------------------
+COUNTRIES = {
+    "Saudi Arabia": {
+        "code_system": "SBC",
+        "subtitle": "Saudi Building Code compliance analysis",
+        "pdf_title": "SBC Compliance Report",
+        "pdf_detail_heading": "Detailed Analysis by SBC Code",
+        "regions": None,
+    },
+    "Austria": {
+        "code_system": "OIB",
+        "subtitle": "Austrian Building Code (OIB) compliance analysis",
+        "pdf_title": "OIB Compliance Report",
+        "pdf_detail_heading": "Detailed Analysis by OIB Guideline",
+        "regions": [
+            "Vienna", "Lower Austria", "Upper Austria", "Styria",
+            "Tyrol", "Carinthia", "Salzburg", "Vorarlberg", "Burgenland",
+        ],
+    },
+}
+
+CODES_DISPLAY = {
+    "Saudi Arabia": [
+        ("SBC 301", "Structural", "Columns, beams, slabs, walls"),
+        ("SBC 801", "Fire / Life Safety", "Egress, stairs, doors"),
+        ("SBC 1001", "Accessibility", "Entrances, circulation"),
+        ("SBC 501", "MEP Systems", "Plumbing, HVAC, electrical"),
+        ("SBC 601", "Energy / Mostadam", "WWR, insulation, envelope"),
+    ],
+    "Austria": [
+        ("OIB RL1", "Mechanical Resistance & Stability", "Columns, beams, slabs, footings"),
+        ("OIB RL2", "Fire Safety", "Fire compartments, stairs, doors"),
+        ("OIB RL3", "Hygiene, Health & Environment", "Spaces, ventilation, moisture"),
+        ("OIB RL4", "Safety in Use & Accessibility", "Doors, stairs, railings, ramps"),
+        ("OIB RL5", "Noise Protection", "Partition walls, slabs, windows"),
+        ("OIB RL6", "Energy & Heat Protection", "WWR, insulation, roof, envelope"),
+    ],
+}
+
 CODE_RECOMMENDATIONS = {
+    # Saudi SBC
     "SBC 301": "Add missing structural elements (IfcColumn, IfcBeam, IfcSlab) to define the structural frame.",
     "SBC 801": "Model egress routes with IfcDoor and IfcStair elements per SBC fire-safety requirements.",
     "SBC 1001": "Define IfcSpace zones and ensure accessible entrances and vertical circulation are modelled.",
     "SBC 501": "Add MEP distribution elements (IfcPipeSegment, IfcDuctSegment, IfcFlowTerminal) to the model.",
     "SBC 601": "Review window-to-wall ratio and add IfcCovering for insulation to meet Mostadam standards.",
+    # Austrian OIB
+    "OIB RL1": "Add structural elements (IfcColumn, IfcBeam, IfcSlab, IfcFooting) per Eurocode requirements.",
+    "OIB RL2": "Model fire compartmentation with IfcWall and egress routes (IfcStair, IfcDoor) per OIB RL2.",
+    "OIB RL3": "Define IfcSpace zones and add IfcWindow for ventilation and IfcCovering for moisture protection.",
+    "OIB RL4": "Add accessibility elements (IfcRamp, IfcRailing) and ensure IfcDoor/IfcSpace coverage per OIB RL4.",
+    "OIB RL5": "Ensure partition walls (IfcWall) and floor slabs (IfcSlab) are modelled for acoustic assessment.",
+    "OIB RL6": "Review window-to-wall ratio and add IfcCovering insulation to meet OIB RL6 energy targets.",
 }
+
+# ---------------------------------------------------------------------------
+# OIB REGIONAL THRESHOLDS
+# ---------------------------------------------------------------------------
+_OIB_BASE_THRESHOLDS = {
+    "max_wwr": 0.40,
+    "min_wwr": 0.10,
+    "min_column_storey_ratio": 2.0,
+    "min_doors_per_storey": 1,
+    "min_stairs_for_tall": 2,
+    "tall_storey_threshold": 3,
+    "require_ramp": False,
+    "require_footings": True,
+    "energy_strict": False,
+    "strict_max_wwr": 0.30,
+}
+
+_OIB_REGIONAL_OVERRIDES: dict[str, dict] = {
+    "Vienna":       {"require_ramp": True, "min_doors_per_storey": 2},
+    "Lower Austria": {},
+    "Upper Austria": {},
+    "Styria":       {},
+    "Tyrol":        {"energy_strict": True, "strict_max_wwr": 0.28},
+    "Carinthia":    {},
+    "Salzburg":     {},
+    "Vorarlberg":   {"energy_strict": True, "strict_max_wwr": 0.25},
+    "Burgenland":   {},
+}
+
+
+def _get_oib_thresholds(bundesland: str) -> dict:
+    t = dict(_OIB_BASE_THRESHOLDS)
+    t.update(_OIB_REGIONAL_OVERRIDES.get(bundesland, {}))
+    return t
+
 
 # ---------------------------------------------------------------------------
 # CSS
@@ -126,7 +211,7 @@ st.html(f"""
       box-shadow: 0 4px 20px rgba(26,15,46,0.08);
   }}
 
-  /* Download buttons — compact */
+  /* Download buttons */
   .stDownloadButton > button {{
       background: {DEEP_PLUM} !important;
       color: white !important;
@@ -140,7 +225,6 @@ st.html(f"""
       background: {ROYAL_PURPLE} !important;
   }}
 
-  /* Hide Streamlit elements */
   div[data-testid="stDecoration"] {{ display: none; }}
 </style>
 """)
@@ -161,11 +245,10 @@ def kpi(val, lbl, accent=None):
 
 
 # ---------------------------------------------------------------------------
-# COMPLIANCE ENGINE
+# COMPLIANCE ENGINE — shared IFC parsing
 # ---------------------------------------------------------------------------
-@st.cache_data(show_spinner="Analyzing compliance...")
-def analyze_sbc_compliance(ifc_bytes: bytes) -> dict:
-    """Parse an IFC file and check against Saudi Building Code (SBC)."""
+def _parse_ifc_counts(ifc_bytes: bytes) -> tuple[dict, dict]:
+    """Parse IFC file and return (counts_dict, model_info_dict)."""
     import ifcopenshell
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ifc")
@@ -185,6 +268,7 @@ def analyze_sbc_compliance(ifc_bytes: bytes) -> dict:
         "IfcPipeSegment", "IfcDuctSegment",
         "IfcFlowSegment", "IfcEnergyConversionDevice",
         "IfcLightFixture", "IfcOutlet", "IfcSwitchingDevice",
+        "IfcFooting", "IfcRamp",
     ]
 
     def _safe_count(t):
@@ -194,155 +278,251 @@ def analyze_sbc_compliance(ifc_bytes: bytes) -> dict:
             return 0
 
     counts = {t: _safe_count(t) for t in _types}
-
-    storeys   = counts["IfcBuildingStorey"]
-    walls     = counts["IfcWall"] + counts["IfcWallStandardCase"]
-    columns   = counts["IfcColumn"]
-    beams     = counts["IfcBeam"]
-    slabs     = counts["IfcSlab"]
-    doors     = counts["IfcDoor"]
-    windows   = counts["IfcWindow"]
-    stairs    = counts["IfcStair"]
-    roofs     = counts["IfcRoof"]
-    coverings = counts["IfcCovering"]
-    railings  = counts["IfcRailing"]
-    spaces    = counts["IfcSpace"]
-    mep_total = sum(counts[t] for t in [
+    counts["_walls"] = counts["IfcWall"] + counts["IfcWallStandardCase"]
+    counts["_mep_total"] = sum(counts[t] for t in [
         "IfcDistributionElement", "IfcFlowTerminal",
         "IfcPipeSegment", "IfcDuctSegment",
         "IfcFlowSegment", "IfcEnergyConversionDevice",
     ])
-    electrical = sum(counts[t] for t in [
+    counts["_electrical"] = sum(counts[t] for t in [
         "IfcLightFixture", "IfcOutlet", "IfcSwitchingDevice",
     ])
-    total_products = len(model.by_type("IfcProduct"))
 
+    total_products = len(model.by_type("IfcProduct"))
     projects = model.by_type("IfcProject")
     model_info = {
         "schema": model.schema,
         "project_name": projects[0].Name if projects else "Unknown",
-        "storeys": storeys,
+        "storeys": counts["IfcBuildingStorey"],
         "total_products": total_products,
-        "mep_total": mep_total,
-        "electrical": electrical,
+        "mep_total": counts["_mep_total"],
+        "electrical": counts["_electrical"],
     }
+    return counts, model_info
 
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE ENGINE — SBC checks (Saudi Arabia)
+# ---------------------------------------------------------------------------
+def _run_sbc_checks(counts: dict, model_info: dict) -> list[dict]:
+    storeys = model_info["storeys"]
+    walls, columns, beams, slabs = counts["_walls"], counts["IfcColumn"], counts["IfcBeam"], counts["IfcSlab"]
+    doors, windows, stairs = counts["IfcDoor"], counts["IfcWindow"], counts["IfcStair"]
+    roofs, coverings, railings, spaces = counts["IfcRoof"], counts["IfcCovering"], counts["IfcRailing"], counts["IfcSpace"]
+    mep_total, electrical = counts["_mep_total"], counts["_electrical"]
     checks = []
 
     # SBC 301: Structural
     v, score = [], 100.0
     if columns == 0:
-        v.append("No columns (IfcColumn) found")
-        score -= 30
+        v.append("No columns (IfcColumn) found"); score -= 30
     elif storeys > 0 and columns / max(1, storeys) < 2:
-        v.append(f"Column-to-storey ratio {columns / max(1, storeys):.1f} below minimum 2.0")
-        score -= 15
+        v.append(f"Column-to-storey ratio {columns / max(1, storeys):.1f} below minimum 2.0"); score -= 15
     if slabs == 0:
-        v.append("No slabs (IfcSlab) found")
-        score -= 25
+        v.append("No slabs (IfcSlab) found"); score -= 25
     if beams == 0 and storeys > 1:
-        v.append("No beams in multi-storey building")
-        score -= 20
+        v.append("No beams in multi-storey building"); score -= 20
     if walls == 0:
-        v.append("No walls defined")
-        score -= 25
-    checks.append({
-        "code": "SBC 301", "name": "Structural",
-        "passed": len(v) == 0, "score": max(0, score), "violations": v,
-        "detail": f"{columns} columns, {beams} beams, {slabs} slabs, {walls} walls",
-    })
+        v.append("No walls defined"); score -= 25
+    checks.append({"code": "SBC 301", "name": "Structural", "passed": len(v) == 0,
+                    "score": max(0, score), "violations": v,
+                    "detail": f"{columns} columns, {beams} beams, {slabs} slabs, {walls} walls"})
 
-    # SBC 801: Fire Protection / Life Safety
+    # SBC 801: Fire / Life Safety
     v, score = [], 100.0
     if storeys >= 2 and stairs == 0:
-        v.append(f"No stairs in {storeys}-storey building")
-        score -= 40
+        v.append(f"No stairs in {storeys}-storey building"); score -= 40
     if doors == 0:
-        v.append("No doors found")
-        score -= 30
+        v.append("No doors found"); score -= 30
     elif storeys > 0 and doors / max(1, storeys) < 1:
-        v.append(f"Only {doors} door(s) for {storeys} storey(s)")
-        score -= 20
+        v.append(f"Only {doors} door(s) for {storeys} storey(s)"); score -= 20
     if storeys >= 3 and stairs < 2:
-        v.append(f"Only {stairs} stairway(s) for {storeys}-storey building")
-        score -= 20
-    checks.append({
-        "code": "SBC 801", "name": "Fire / Life Safety",
-        "passed": len(v) == 0, "score": max(0, score), "violations": v,
-        "detail": f"{doors} doors, {stairs} stairs, {storeys} storey(s)",
-    })
+        v.append(f"Only {stairs} stairway(s) for {storeys}-storey building"); score -= 20
+    checks.append({"code": "SBC 801", "name": "Fire / Life Safety", "passed": len(v) == 0,
+                    "score": max(0, score), "violations": v,
+                    "detail": f"{doors} doors, {stairs} stairs, {storeys} storey(s)"})
 
     # SBC 1001: Accessibility
     v, score = [], 100.0
     if doors == 0:
-        v.append("No doors modelled")
-        score -= 40
+        v.append("No doors modelled"); score -= 40
     if storeys >= 2 and stairs == 0:
-        v.append("No vertical circulation elements")
-        score -= 30
+        v.append("No vertical circulation elements"); score -= 30
     if spaces == 0:
-        v.append("No IfcSpace definitions")
-        score -= 20
+        v.append("No IfcSpace definitions"); score -= 20
     if railings == 0 and storeys >= 2:
-        v.append("No railings in multi-storey building")
-        score -= 10
-    checks.append({
-        "code": "SBC 1001", "name": "Accessibility",
-        "passed": len(v) == 0, "score": max(0, score), "violations": v,
-        "detail": f"{doors} doors, {spaces} spaces, {railings} railings",
-    })
+        v.append("No railings in multi-storey building"); score -= 10
+    checks.append({"code": "SBC 1001", "name": "Accessibility", "passed": len(v) == 0,
+                    "score": max(0, score), "violations": v,
+                    "detail": f"{doors} doors, {spaces} spaces, {railings} railings"})
 
     # SBC 501: MEP Systems
     v, score = [], 100.0
     if mep_total == 0:
-        v.append("No MEP elements found")
-        score = 20
+        v.append("No MEP elements found"); score = 20
     elif mep_total < max(1, storeys) * 3:
-        v.append(f"Only {mep_total} MEP element(s) for {storeys} storey(s)")
-        score -= 25
+        v.append(f"Only {mep_total} MEP element(s) for {storeys} storey(s)"); score -= 25
     if counts["IfcDuctSegment"] == 0 and counts["IfcFlowSegment"] == 0:
-        v.append("No HVAC ductwork modelled")
-        score -= 15
+        v.append("No HVAC ductwork modelled"); score -= 15
     if counts["IfcPipeSegment"] == 0:
-        v.append("No plumbing piping modelled")
-        score -= 15
+        v.append("No plumbing piping modelled"); score -= 15
     if counts["IfcFlowTerminal"] == 0:
-        v.append("No flow terminals modelled")
-        score -= 10
+        v.append("No flow terminals modelled"); score -= 10
     if electrical == 0:
-        v.append("No electrical elements detected")
-        score -= 10
-    checks.append({
-        "code": "SBC 501", "name": "MEP Systems",
-        "passed": len(v) == 0, "score": max(0, score), "violations": v,
-        "detail": f"{mep_total} MEP, {electrical} electrical, "
-                  f"{counts['IfcPipeSegment']} pipes, {counts['IfcDuctSegment']} ducts",
-    })
+        v.append("No electrical elements detected"); score -= 10
+    checks.append({"code": "SBC 501", "name": "MEP Systems", "passed": len(v) == 0,
+                    "score": max(0, score), "violations": v,
+                    "detail": f"{mep_total} MEP, {electrical} electrical, "
+                              f"{counts['IfcPipeSegment']} pipes, {counts['IfcDuctSegment']} ducts"})
 
-    # SBC 601: Energy Efficiency / Mostadam
+    # SBC 601: Energy / Mostadam
     v, score = [], 100.0
     if windows > 0 and walls > 0:
         wwr = windows / (windows + walls)
         if wwr > 0.40:
-            v.append(f"WWR {wwr:.0%} exceeds 40% maximum")
-            score -= 25
+            v.append(f"WWR {wwr:.0%} exceeds 40% maximum"); score -= 25
         elif wwr < 0.10:
-            v.append(f"WWR {wwr:.0%} below 10%")
-            score -= 15
+            v.append(f"WWR {wwr:.0%} below 10%"); score -= 15
     elif windows == 0:
-        v.append("No windows modelled")
-        score -= 20
+        v.append("No windows modelled"); score -= 20
     if roofs > 0 and coverings == 0:
-        v.append("No insulation layer modelled")
-        score -= 20
+        v.append("No insulation layer modelled"); score -= 20
     if roofs == 0:
-        v.append("No roof elements")
-        score -= 15
-    checks.append({
-        "code": "SBC 601", "name": "Energy / Mostadam",
-        "passed": len(v) == 0, "score": max(0, score), "violations": v,
-        "detail": f"{windows} windows, {walls} walls, {roofs} roofs, {coverings} coverings",
-    })
+        v.append("No roof elements"); score -= 15
+    checks.append({"code": "SBC 601", "name": "Energy / Mostadam", "passed": len(v) == 0,
+                    "score": max(0, score), "violations": v,
+                    "detail": f"{windows} windows, {walls} walls, {roofs} roofs, {coverings} coverings"})
+
+    return checks
+
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE ENGINE — OIB checks (Austria)
+# ---------------------------------------------------------------------------
+def _run_oib_checks(counts: dict, model_info: dict, bundesland: str) -> list[dict]:
+    t = _get_oib_thresholds(bundesland)
+    storeys = model_info["storeys"]
+    walls, columns, beams, slabs = counts["_walls"], counts["IfcColumn"], counts["IfcBeam"], counts["IfcSlab"]
+    doors, windows, stairs = counts["IfcDoor"], counts["IfcWindow"], counts["IfcStair"]
+    roofs, coverings, railings, spaces = counts["IfcRoof"], counts["IfcCovering"], counts["IfcRailing"], counts["IfcSpace"]
+    footings, ramps = counts["IfcFooting"], counts["IfcRamp"]
+    checks = []
+
+    # OIB RL1: Mechanical Resistance & Stability
+    v, score = [], 100.0
+    if columns == 0:
+        v.append("No columns (IfcColumn) found"); score -= 25
+    elif storeys > 0 and columns / max(1, storeys) < t["min_column_storey_ratio"]:
+        v.append(f"Column-to-storey ratio {columns / max(1, storeys):.1f} below {t['min_column_storey_ratio']:.1f}"); score -= 15
+    if slabs == 0:
+        v.append("No slabs (IfcSlab) found"); score -= 20
+    if beams == 0 and storeys > 1:
+        v.append("No beams in multi-storey building"); score -= 20
+    if walls == 0:
+        v.append("No walls defined"); score -= 20
+    if t["require_footings"] and footings == 0:
+        v.append("No foundation elements (IfcFooting) found"); score -= 15
+    checks.append({"code": "OIB RL1", "name": "Mechanical Resistance & Stability",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{columns} columns, {beams} beams, {slabs} slabs, {walls} walls, {footings} footings"})
+
+    # OIB RL2: Fire Safety
+    v, score = [], 100.0
+    if storeys >= 2 and stairs == 0:
+        v.append(f"No stairs in {storeys}-storey building"); score -= 35
+    if doors == 0:
+        v.append("No doors found for fire egress"); score -= 30
+    elif storeys > 0 and doors / max(1, storeys) < t["min_doors_per_storey"]:
+        v.append(f"Only {doors} door(s) for {storeys} storey(s) -- minimum {t['min_doors_per_storey']} per storey"); score -= 20
+    if storeys >= t["tall_storey_threshold"] and stairs < t["min_stairs_for_tall"]:
+        v.append(f"Only {stairs} stairway(s) for {storeys}-storey building -- OIB RL2 requires {t['min_stairs_for_tall']}"); score -= 20
+    if walls == 0:
+        v.append("No walls modelled -- cannot verify fire compartmentation"); score -= 15
+    checks.append({"code": "OIB RL2", "name": "Fire Safety",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{doors} doors, {stairs} stairs, {walls} walls, {storeys} storey(s)"})
+
+    # OIB RL3: Hygiene, Health & Environment
+    v, score = [], 100.0
+    if spaces == 0:
+        v.append("No IfcSpace definitions -- cannot verify room ventilation"); score -= 35
+    if windows == 0:
+        v.append("No windows modelled -- natural ventilation cannot be assessed"); score -= 30
+    elif spaces > 0 and windows < spaces:
+        v.append(f"Only {windows} window(s) for {spaces} space(s) -- insufficient natural ventilation"); score -= 20
+    if coverings == 0:
+        v.append("No IfcCovering elements -- moisture protection cannot be verified"); score -= 15
+    checks.append({"code": "OIB RL3", "name": "Hygiene, Health & Environment",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{spaces} spaces, {windows} windows, {coverings} coverings"})
+
+    # OIB RL4: Safety in Use & Accessibility
+    v, score = [], 100.0
+    if doors == 0:
+        v.append("No doors modelled"); score -= 30
+    if storeys >= 2 and stairs == 0:
+        v.append("No vertical circulation elements"); score -= 25
+    if railings == 0 and storeys >= 2:
+        v.append("No railings in multi-storey building"); score -= 15
+    if t["require_ramp"] and ramps == 0:
+        v.append(f"No ramps (IfcRamp) found -- required in {bundesland}"); score -= 15
+    if spaces == 0:
+        v.append("No IfcSpace definitions for accessibility verification"); score -= 15
+    checks.append({"code": "OIB RL4", "name": "Safety in Use & Accessibility",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{doors} doors, {stairs} stairs, {railings} railings, {ramps} ramps, {spaces} spaces"})
+
+    # OIB RL5: Noise Protection
+    v, score = [], 100.0
+    if walls == 0:
+        v.append("No walls modelled -- acoustic separation cannot be assessed"); score -= 40
+    if slabs == 0:
+        v.append("No slabs modelled -- impact noise isolation cannot be verified"); score -= 30
+    if windows == 0 and walls > 0:
+        v.append("No windows modelled -- facade sound insulation cannot be assessed"); score -= 15
+    if storeys > 1 and slabs < storeys:
+        v.append(f"Only {slabs} slab(s) for {storeys} storey(s) -- floor separations incomplete"); score -= 15
+    checks.append({"code": "OIB RL5", "name": "Noise Protection",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{walls} walls, {slabs} slabs, {windows} windows"})
+
+    # OIB RL6: Energy & Heat Protection
+    v, score = [], 100.0
+    max_wwr = t["strict_max_wwr"] if t["energy_strict"] else t["max_wwr"]
+    if windows > 0 and walls > 0:
+        wwr = windows / (windows + walls)
+        if wwr > max_wwr:
+            label = f" (strict regional limit)" if t["energy_strict"] else ""
+            v.append(f"WWR {wwr:.0%} exceeds {max_wwr:.0%} maximum{label}"); score -= 25
+        elif wwr < t["min_wwr"]:
+            v.append(f"WWR {wwr:.0%} below {t['min_wwr']:.0%}"); score -= 15
+    elif windows == 0:
+        v.append("No windows modelled"); score -= 20
+    if roofs > 0 and coverings == 0:
+        v.append("No insulation layer (IfcCovering) modelled"); score -= 20
+    if roofs == 0:
+        v.append("No roof elements"); score -= 15
+    if t["energy_strict"] and coverings == 0 and walls > 0:
+        v.append(f"No wall insulation modelled -- required in {bundesland} (mountain climate zone)"); score -= 15
+    checks.append({"code": "OIB RL6", "name": "Energy & Heat Protection",
+                    "passed": len(v) == 0, "score": max(0, score), "violations": v,
+                    "detail": f"{windows} windows, {walls} walls, {roofs} roofs, {coverings} coverings (max WWR: {max_wwr:.0%})"})
+
+    return checks
+
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE ENGINE — dispatcher
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner="Analyzing compliance...")
+def analyze_compliance(ifc_bytes: bytes, country: str, region: str | None = None) -> dict:
+    """Parse IFC and run compliance checks for the selected country/region."""
+    counts, model_info = _parse_ifc_counts(ifc_bytes)
+
+    if country == "Austria":
+        checks = _run_oib_checks(counts, model_info, region or "Vienna")
+    else:
+        checks = _run_sbc_checks(counts, model_info)
 
     overall_score = sum(c["score"] for c in checks) / len(checks)
     return {
@@ -356,9 +536,10 @@ def analyze_sbc_compliance(ifc_bytes: bytes) -> dict:
 # ---------------------------------------------------------------------------
 # PDF REPORT
 # ---------------------------------------------------------------------------
-def build_compliance_pdf(result, filename):
+def build_compliance_pdf(result, filename, country="Saudi Arabia", region=None):
     from fpdf import FPDF
 
+    cfg = COUNTRIES[country]
     mi = result["model_info"]
     overall = result["overall_score"]
     pass_count = sum(1 for c in result["checks"] if c["passed"])
@@ -388,19 +569,25 @@ def build_compliance_pdf(result, filename):
     pdf.set_font("Helvetica", "B", 22)
     pdf.set_text_color(255, 255, 255)
     pdf.set_y(16)
-    pdf.cell(0, 10, "SBC Compliance Report", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, _latin1(cfg["pdf_title"]), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 11)
     pdf.cell(0, 8, "Construction Compliance Checker", align="C", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_y(65)
     pdf.set_text_color(60, 60, 60)
     pdf.set_font("Helvetica", "", 10)
-    for line in [
+    info_lines = [
         f"Project: {mi['project_name']}",
         f"File: {filename}",
         f"Date: {date.today().strftime('%B %d, %Y')}",
-        f"Schema: {mi['schema']}  |  Storeys: {mi['storeys']}  |  Products: {mi['total_products']:,}",
-    ]:
+        f"Code: {cfg['code_system']}  |  Country: {country}",
+    ]
+    if region:
+        info_lines.append(f"Region: {region}")
+    info_lines.append(
+        f"Schema: {mi['schema']}  |  Storeys: {mi['storeys']}  |  Products: {mi['total_products']:,}"
+    )
+    for line in info_lines:
         pdf.cell(0, 6, _latin1(line), new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(8)
@@ -414,7 +601,7 @@ def build_compliance_pdf(result, filename):
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(26, 15, 46)
-    pdf.cell(0, 10, "Detailed Analysis by SBC Code", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, _latin1(cfg["pdf_detail_heading"]), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     for chk in result["checks"]:
@@ -529,11 +716,7 @@ def extract_geometry(ifc_bytes: bytes) -> list:
 # SYNTHETIC MEP GENERATION
 # ---------------------------------------------------------------------------
 def _generate_synthetic_mep(elements: list) -> dict:
-    """Generate realistic MEP system traces based on building geometry.
-
-    Returns dict with keys: pipes, ducts, electrical.
-    Each is a list of (x_list, y_list, z_list) line segments.
-    """
+    """Generate realistic MEP system traces based on building geometry."""
     if not elements:
         return {"pipes": [], "ducts": [], "electrical": []}
 
@@ -545,7 +728,6 @@ def _generate_synthetic_mep(elements: list) -> dict:
     dx, dy = xmax - xmin, ymax - ymin
     cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
 
-    # Estimate floor levels
     floor_h = 3.0
     n_floors = max(1, round((zmax - zmin) / floor_h))
     floors = [zmin + i * (zmax - zmin) / n_floors for i in range(n_floors + 1)]
@@ -558,24 +740,19 @@ def _generate_synthetic_mep(elements: list) -> dict:
         duct_z = fz + (floors[fi + 1] - fz) - 0.45
         elec_z = fz + (floors[fi + 1] - fz) - 0.25
 
-        # --- Plumbing ---
-        # Main supply (east-west)
+        # Plumbing
         pipes.append(([xmin + dx * 0.06, cx - dx * 0.05, cx - dx * 0.05],
                       [cy - dy * 0.2, cy - dy * 0.2, cy - dy * 0.05],
                       [pipe_z, pipe_z, pipe_z]))
         pipes.append(([cx + dx * 0.05, xmax - dx * 0.06],
                       [cy - dy * 0.2, cy - dy * 0.2],
                       [pipe_z, pipe_z]))
-        # Main drain (parallel offset)
         pipes.append(([xmin + dx * 0.06, xmax - dx * 0.06],
                       [cy + dy * 0.18, cy + dy * 0.18],
                       [pipe_z - 0.12, pipe_z - 0.12]))
-        # Branch pipes (N-S)
         for frac in [0.22, 0.5, 0.78]:
             bx = xmin + dx * frac
-            pipes.append(([bx, bx], [ymin + dy * 0.08, ymax - dy * 0.08],
-                          [pipe_z, pipe_z]))
-        # Fixture connections
+            pipes.append(([bx, bx], [ymin + dy * 0.08, ymax - dy * 0.08], [pipe_z, pipe_z]))
         for frac_x in [0.3, 0.7]:
             for frac_y in [0.25, 0.75]:
                 px, py = xmin + dx * frac_x, ymin + dy * frac_y
@@ -583,54 +760,37 @@ def _generate_synthetic_mep(elements: list) -> dict:
                               [py, py + dy * 0.06, py + dy * 0.06],
                               [pipe_z, pipe_z, pipe_z + 0.8]))
 
-        # --- HVAC Ducts ---
-        # Main trunk (E-W center)
+        # HVAC Ducts
         ducts.append(([xmin + dx * 0.05, xmax - dx * 0.05],
-                      [cy + dy * 0.02, cy + dy * 0.02],
-                      [duct_z, duct_z]))
-        # Branch ducts (N-S from trunk)
+                      [cy + dy * 0.02, cy + dy * 0.02], [duct_z, duct_z]))
         for frac in [0.2, 0.4, 0.6, 0.8]:
             bx = xmin + dx * frac
             ducts.append(([bx, bx], [ymin + dy * 0.12, cy], [duct_z, duct_z]))
             ducts.append(([bx, bx], [cy, ymax - dy * 0.12], [duct_z, duct_z]))
-        # Return duct (parallel)
         ducts.append(([xmin + dx * 0.08, xmax - dx * 0.08],
-                      [cy - dy * 0.25, cy - dy * 0.25],
-                      [duct_z - 0.15, duct_z - 0.15]))
+                      [cy - dy * 0.25, cy - dy * 0.25], [duct_z - 0.15, duct_z - 0.15]))
 
-        # --- Electrical ---
-        # Main conduit run
+        # Electrical
         electrical.append(([xmin + dx * 0.04, xmax - dx * 0.04],
-                           [cy + dy * 0.35, cy + dy * 0.35],
-                           [elec_z, elec_z]))
-        # Secondary run
+                           [cy + dy * 0.35, cy + dy * 0.35], [elec_z, elec_z]))
         electrical.append(([xmin + dx * 0.04, xmax - dx * 0.04],
-                           [cy - dy * 0.35, cy - dy * 0.35],
-                           [elec_z, elec_z]))
-        # Branch circuits (N-S)
+                           [cy - dy * 0.35, cy - dy * 0.35], [elec_z, elec_z]))
         for frac in [0.12, 0.28, 0.44, 0.6, 0.76, 0.92]:
             bx = xmin + dx * frac
-            electrical.append(([bx, bx], [ymin + dy * 0.04, ymax - dy * 0.04],
-                               [elec_z, elec_z]))
-        # Wall drops (vertical segments to outlets/switches)
+            electrical.append(([bx, bx], [ymin + dy * 0.04, ymax - dy * 0.04], [elec_z, elec_z]))
         for fx in [0.15, 0.35, 0.55, 0.75, 0.9]:
             for fy in [0.15, 0.5, 0.85]:
                 px, py = xmin + dx * fx, ymin + dy * fy
-                electrical.append(([px, px], [py, py],
-                                   [fz + 0.4, fz + 1.2]))
+                electrical.append(([px, px], [py, py], [fz + 0.4, fz + 1.2]))
 
-    # Vertical risers between floors
+    # Vertical risers
     if n_floors > 1:
         z_bot, z_top = floors[0], floors[-1]
-        # Pipe risers
         for (rx, ry) in [(xmin + dx * 0.08, cy - dy * 0.2),
                          (xmax - dx * 0.08, cy + dy * 0.18)]:
             pipes.append(([rx, rx], [ry, ry], [z_bot + 0.35, z_top + 0.35]))
-        # Duct shaft
         ducts.append(([xmax - dx * 0.12, xmax - dx * 0.12],
-                      [cy, cy],
-                      [z_bot + floor_h - 0.45, z_top + floor_h - 0.45]))
-        # Electrical riser
+                      [cy, cy], [z_bot + floor_h - 0.45, z_top + floor_h - 0.45]))
         electrical.append(([xmin + dx * 0.08, xmin + dx * 0.08],
                            [cy + dy * 0.35, cy + dy * 0.35],
                            [z_bot + floor_h - 0.25, z_top + floor_h - 0.25]))
@@ -649,19 +809,15 @@ _MEP_STYLES = {
 
 
 def build_3d_figure(
-    elements: list,
-    mep: dict,
-    show_structure: bool = True,
-    show_plumbing: bool = True,
-    show_hvac: bool = True,
-    show_electrical: bool = True,
+    elements: list, mep: dict,
+    show_structure: bool = True, show_plumbing: bool = True,
+    show_hvac: bool = True, show_electrical: bool = True,
     height: int = 600,
 ):
     """Build interactive Plotly 3D figure with structural + MEP layers."""
     fig = go.Figure()
     has_data = False
 
-    # Structural mesh elements
     if show_structure and elements:
         for elem in elements:
             if elem["type"] not in _STRUCTURAL_TYPES:
@@ -671,26 +827,17 @@ def build_3d_figure(
                 x=v[:, 0], y=v[:, 1], z=v[:, 2],
                 i=f[:, 0], j=f[:, 1], k=f[:, 2],
                 color=TYPE_COLORS.get(elem["type"], "#D3D3D3"),
-                opacity=0.88,
-                flatshading=True,
+                opacity=0.88, flatshading=True,
                 lighting=dict(ambient=0.55, diffuse=0.80, specular=0.14,
                               roughness=0.65, fresnel=0.12),
                 lightposition=dict(x=120, y=200, z=300),
-                hovertemplate=(
-                    f"<b>{elem['name']}</b><br>"
-                    f"Type: {elem['type'].replace('Ifc', '')}"
-                    "<extra></extra>"
-                ),
+                hovertemplate=(f"<b>{elem['name']}</b><br>"
+                               f"Type: {elem['type'].replace('Ifc', '')}<extra></extra>"),
                 showlegend=False,
             ))
             has_data = True
 
-    # MEP line traces
-    layer_map = {
-        "pipes": show_plumbing,
-        "ducts": show_hvac,
-        "electrical": show_electrical,
-    }
+    layer_map = {"pipes": show_plumbing, "ducts": show_hvac, "electrical": show_electrical}
     for cat, visible in layer_map.items():
         if not visible or not mep.get(cat):
             continue
@@ -701,8 +848,7 @@ def build_3d_figure(
             all_y.extend(list(ys) + [None])
             all_z.extend(list(zs) + [None])
         fig.add_trace(go.Scatter3d(
-            x=all_x, y=all_y, z=all_z,
-            mode="lines",
+            x=all_x, y=all_y, z=all_z, mode="lines",
             line=dict(color=style["color"], width=style["width"]),
             name=style["label"],
             hovertemplate=f"<b>{style['label']}</b><extra></extra>",
@@ -713,7 +859,6 @@ def build_3d_figure(
     if not has_data:
         return None
 
-    # Ground plane
     ref_verts = np.vstack([e["verts"] for e in elements]) if elements else np.array([[0, 0, 0]])
     xmin, xmax = ref_verts[:, 0].min() - 3, ref_verts[:, 0].max() + 3
     ymin, ymax = ref_verts[:, 1].min() - 3, ref_verts[:, 1].max() + 3
@@ -727,27 +872,20 @@ def build_3d_figure(
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            zaxis=dict(visible=False),
+            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
             aspectmode="data",
-            camera=dict(
-                eye=dict(x=1.45, y=-1.55, z=1.05),
-                center=dict(x=0, y=0, z=0),
-                up=dict(x=0, y=0, z=1),
-                projection=dict(type="perspective"),
-            ),
+            camera=dict(eye=dict(x=1.45, y=-1.55, z=1.05),
+                        center=dict(x=0, y=0, z=0),
+                        up=dict(x=0, y=0, z=1),
+                        projection=dict(type="perspective")),
             bgcolor="#f7f5fa",
         ),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=height,
+        margin=dict(l=0, r=0, t=0, b=0), height=height,
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(
-            yanchor="top", y=0.98, xanchor="left", x=0.01,
-            bgcolor="rgba(255,255,255,0.85)",
-            bordercolor="#e0dae8", borderwidth=1,
-            font=dict(size=11, color="#1a1a2e"),
-        ),
+        legend=dict(yanchor="top", y=0.98, xanchor="left", x=0.01,
+                    bgcolor="rgba(255,255,255,0.85)",
+                    bordercolor="#e0dae8", borderwidth=1,
+                    font=dict(size=11, color="#1a1a2e")),
     )
     return fig
 
@@ -765,6 +903,24 @@ with st.sidebar:
         f"</div>"
     )
     st.divider()
+
+    # Country & region selection
+    selected_country = st.selectbox("Building Code", list(COUNTRIES.keys()),
+                                     key="country_select")
+    country_cfg = COUNTRIES[selected_country]
+
+    selected_region = None
+    if country_cfg["regions"]:
+        selected_region = st.selectbox("Region", country_cfg["regions"],
+                                        key="region_select")
+
+    st.divider()
+
+    # Reset comparison when country/region changes
+    _compliance_key = f"{selected_country}_{selected_region}"
+    if st.session_state.get("_last_compliance_key") != _compliance_key:
+        st.session_state.original_result = None
+        st.session_state._last_compliance_key = _compliance_key
 
     source = st.radio("Model Source", ["Upload IFC", "Sample Model"],
                        key="model_source", label_visibility="collapsed")
@@ -824,33 +980,31 @@ with st.sidebar:
 # ===========================================================================
 
 # Header
+_subtitle = country_cfg["subtitle"]
+if selected_region:
+    _subtitle += f" -- {selected_region}"
 st.html(
     f"<div style='margin-bottom:1.2rem;'>"
     f"<h1 style='font-size:1.6rem; font-weight:800; color:{TEXT_PRIMARY};"
     f" margin:0; letter-spacing:-0.02em;'>Construction Compliance Checker</h1>"
     f"<p style='font-size:0.85rem; color:{TEXT_SECONDARY}; margin:0.2rem 0 0;'>"
-    f"Saudi Building Code compliance analysis</p>"
+    f"{_subtitle}</p>"
     f"</div>"
 )
 
 # -- Empty state --
 if ifc_bytes is None:
+    _code_label = country_cfg["code_system"]
     st.html(
         f"<div style='text-align:center; padding:4rem 1rem 3rem;'>"
         f"<div style='font-size:1.6rem; font-weight:700; color:{TEXT_PRIMARY};"
         f" margin-bottom:0.5rem;'>Upload an IFC model to begin</div>"
         f"<div style='font-size:0.9rem; color:{TEXT_SECONDARY}; max-width:480px;"
         f" margin:0 auto 2rem;'>Select a sample model from the sidebar or upload "
-        f"your own .ifc file to run automated SBC compliance checks.</div>"
+        f"your own .ifc file to run automated {_code_label} compliance checks.</div>"
         f"</div>"
     )
-    codes_data = [
-        ("SBC 301", "Structural", "Columns, beams, slabs, walls"),
-        ("SBC 801", "Fire / Life Safety", "Egress, stairs, doors"),
-        ("SBC 1001", "Accessibility", "Entrances, circulation"),
-        ("SBC 501", "MEP Systems", "Plumbing, HVAC, electrical"),
-        ("SBC 601", "Energy / Mostadam", "WWR, insulation, envelope"),
-    ]
+    codes_data = CODES_DISPLAY[selected_country]
     cards_html = "".join(
         f"<div style='background:{SURFACE}; border:1px solid {BORDER};"
         f" padding:0.85rem 1.1rem; border-radius:10px;'>"
@@ -870,7 +1024,7 @@ if ifc_bytes is None:
     st.stop()
 
 # -- Analyze --
-result = analyze_sbc_compliance(ifc_bytes)
+result = analyze_compliance(ifc_bytes, selected_country, selected_region)
 mi = result["model_info"]
 overall = result["overall_score"]
 pass_count = sum(1 for c in result["checks"] if c["passed"])
@@ -909,16 +1063,14 @@ st.html(
     f"<div style='display:flex; align-items:center; gap:0; background:{SURFACE};"
     f" border:1px solid {BORDER}; border-radius:12px; overflow:hidden;"
     f" margin-bottom:1rem;'>"
-    # Score badge (left)
     f"<div style='background:linear-gradient(135deg, {DEEP_PLUM}, {ROYAL_PURPLE});"
     f" padding:1rem 1.6rem; display:flex; flex-direction:column;"
     f" align-items:center; min-width:140px;'>"
     f"<div style='font-size:2rem; font-weight:800; color:white;'>{overall:.0f}%</div>"
-    f"<div style='display:inline-block; background:{"rgba(255,255,255,0.2)" if result["overall_pass"] else "rgba(239,68,68,0.3)"};"
+    f"<div style='display:inline-block; background:{'rgba(255,255,255,0.2)' if result['overall_pass'] else 'rgba(239,68,68,0.3)'};"
     f" color:white; padding:0.15rem 0.6rem; border-radius:1rem; font-size:0.65rem;"
     f" font-weight:700; letter-spacing:0.06em; margin-top:0.2rem;'>{overall_label}</div>"
     f"</div>"
-    # KPIs (right)
     f"<div style='display:flex; flex:1; justify-content:space-around; padding:0.6rem 1rem;'>"
     + kpi(str(mi["storeys"]), "Storeys")
     + kpi(f'{mi["total_products"]:,}', "Products")
@@ -935,11 +1087,8 @@ mep_data = _generate_synthetic_mep(geo) if geo else {"pipes": [], "ducts": [], "
 
 fig_3d = build_3d_figure(
     geo, mep_data,
-    show_structure=show_structure,
-    show_plumbing=show_plumbing,
-    show_hvac=show_hvac,
-    show_electrical=show_electrical,
-    height=600,
+    show_structure=show_structure, show_plumbing=show_plumbing,
+    show_hvac=show_hvac, show_electrical=show_electrical, height=600,
 )
 if fig_3d:
     st.plotly_chart(fig_3d, use_container_width=True, config={
@@ -952,11 +1101,13 @@ else:
 
 # -- Action bar (report + download) --
 _act_left, _act_right = st.columns([3, 1])
+_code_prefix = country_cfg["code_system"]
+_region_suffix = f"_{selected_region}" if selected_region else ""
 with _act_left:
     st.download_button(
         "Download Compliance Report (PDF)",
-        data=build_compliance_pdf(result, ifc_filename),
-        file_name=f"SBC_Compliance_{mi['project_name']}_{date.today().isoformat()}.pdf",
+        data=build_compliance_pdf(result, ifc_filename, selected_country, selected_region),
+        file_name=f"{_code_prefix}_Compliance_{mi['project_name']}{_region_suffix}_{date.today().isoformat()}.pdf",
         mime="application/pdf",
         key="export_pdf",
     )
@@ -1005,7 +1156,6 @@ for check in result["checks"]:
         f"<div style='background:{SURFACE}; border:1px solid {BORDER};"
         f" border-left:4px solid {border_c}; padding:1rem 1.3rem;"
         f" border-radius:10px; margin-bottom:0.6rem;'>"
-        # Header row
         f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
         f"<div>"
         f"<span style='font-weight:700; color:{TEXT_PRIMARY}; font-size:0.95rem;'>"
@@ -1020,10 +1170,8 @@ for check in result["checks"]:
         f" border-radius:6px; font-size:0.68rem; font-weight:700;"
         f" letter-spacing:0.04em;'>{badge_lbl}</span>"
         f"</div></div>"
-        # Detail
         f"<div style='font-size:0.78rem; color:{TEXT_MUTED}; margin-top:0.35rem;'>"
         f"{check['detail']}</div>"
-        # Progress bar
         f"<div style='height:4px; background:#f0edf5; border-radius:2px; margin-top:0.5rem;'>"
         f"<div style='height:100%; width:{sc:.0f}%; background:{bar_color};"
         f" border-radius:2px;'></div></div>"

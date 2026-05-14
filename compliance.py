@@ -866,7 +866,7 @@ def build_3d_figure(
     fig.add_trace(go.Mesh3d(
         x=[xmin, xmax, xmax, xmin], y=[ymin, ymin, ymax, ymax],
         z=[z_ground] * 4, i=[0, 0], j=[1, 2], k=[2, 3],
-        color="#f0edf5", opacity=0.5, hoverinfo="skip", showlegend=False,
+        color="#d5d5d5", opacity=0.5, hoverinfo="skip", showlegend=False,
         flatshading=True, lighting=dict(ambient=0.92, diffuse=0.3),
     ))
 
@@ -878,7 +878,7 @@ def build_3d_figure(
                         center=dict(x=0, y=0, z=0),
                         up=dict(x=0, y=0, z=1),
                         projection=dict(type="perspective")),
-            bgcolor="#f7f5fa",
+            bgcolor="#e5e5e5",
         ),
         margin=dict(l=0, r=0, t=0, b=0), height=height,
         paper_bgcolor="rgba(0,0,0,0)",
@@ -905,8 +905,11 @@ with st.sidebar:
     st.divider()
 
     # Country & region selection
-    selected_country = st.selectbox("Building Code", list(COUNTRIES.keys()),
-                                     key="country_select")
+    _COUNTRY_FLAGS = {"Saudi Arabia": "\U0001f1f8\U0001f1e6", "Austria": "\U0001f1e6\U0001f1f9"}
+    selected_country = st.selectbox(
+        "Building Code", list(COUNTRIES.keys()), key="country_select",
+        format_func=lambda c: f"{_COUNTRY_FLAGS.get(c, '')}  {c}",
+    )
     country_cfg = COUNTRIES[selected_country]
 
     selected_region = None
@@ -968,11 +971,6 @@ with st.sidebar:
             ifc_bytes = corrected.getvalue()
             ifc_filename = corrected.name
 
-    st.divider()
-    st.html(
-        "<div style='font-size:0.65rem; color:rgba(255,255,255,0.3); text-align:center;"
-        " padding:0.3rem 0;'>ifcopenshell + Plotly</div>"
-    )
 
 
 # ===========================================================================

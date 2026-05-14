@@ -872,7 +872,13 @@ def build_3d_figure(
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+            xaxis=dict(visible=True, showgrid=True, gridcolor="#c8c8c8",
+                       showticklabels=False, title="", showline=False,
+                       zeroline=False, showbackground=True, backgroundcolor="#e5e5e5"),
+            yaxis=dict(visible=True, showgrid=True, gridcolor="#c8c8c8",
+                       showticklabels=False, title="", showline=False,
+                       zeroline=False, showbackground=True, backgroundcolor="#e5e5e5"),
+            zaxis=dict(visible=False),
             aspectmode="data",
             camera=dict(eye=dict(x=1.45, y=-1.55, z=1.05),
                         center=dict(x=0, y=0, z=0),
@@ -905,10 +911,19 @@ with st.sidebar:
     st.divider()
 
     # Country & region selection
-    _COUNTRY_FLAGS = {"Saudi Arabia": "\U0001f1f8\U0001f1e6", "Austria": "\U0001f1e6\U0001f1f9"}
+    _FLAG_CODES = {"Saudi Arabia": "sa", "Austria": "at"}
     selected_country = st.selectbox(
         "Building Code", list(COUNTRIES.keys()), key="country_select",
-        format_func=lambda c: f"{_COUNTRY_FLAGS.get(c, '')}  {c}",
+        label_visibility="collapsed",
+    )
+    _fc = _FLAG_CODES[selected_country]
+    st.markdown(
+        f"<div style='display:flex; align-items:center; gap:6px; margin:-18px 0 6px 2px;'>"
+        f"<img src='https://flagcdn.com/w40/{_fc}.png' width='22' "
+        f"style='border-radius:50%; object-fit:cover; aspect-ratio:1; box-shadow:0 1px 3px rgba(0,0,0,0.15);'>"
+        f"<span style='font-size:0.82rem; font-weight:600; color:#240F3E;'>{selected_country}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
     country_cfg = COUNTRIES[selected_country]
 

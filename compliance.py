@@ -226,6 +226,17 @@ st.html(f"""
   }}
 
   div[data-testid="stDecoration"] {{ display: none; }}
+
+  /* 3D viewer grid background */
+  .stPlotlyChart {{
+      background-color: #e5e5e5;
+      background-image:
+          linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
+      background-size: 20px 20px;
+      border-radius: 10px;
+      overflow: hidden;
+  }}
 </style>
 """)
 
@@ -866,25 +877,19 @@ def build_3d_figure(
     fig.add_trace(go.Mesh3d(
         x=[xmin, xmax, xmax, xmin], y=[ymin, ymin, ymax, ymax],
         z=[z_ground] * 4, i=[0, 0], j=[1, 2], k=[2, 3],
-        color="#d5d5d5", opacity=0.5, hoverinfo="skip", showlegend=False,
+        color="#d5d5d5", opacity=0.25, hoverinfo="skip", showlegend=False,
         flatshading=True, lighting=dict(ambient=0.92, diffuse=0.3),
     ))
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(visible=True, showgrid=True, gridcolor="#c8c8c8",
-                       showticklabels=False, title="", showline=False,
-                       zeroline=False, showbackground=True, backgroundcolor="#e5e5e5"),
-            yaxis=dict(visible=True, showgrid=True, gridcolor="#c8c8c8",
-                       showticklabels=False, title="", showline=False,
-                       zeroline=False, showbackground=True, backgroundcolor="#e5e5e5"),
-            zaxis=dict(visible=False),
+            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
             aspectmode="data",
             camera=dict(eye=dict(x=1.45, y=-1.55, z=1.05),
                         center=dict(x=0, y=0, z=0),
                         up=dict(x=0, y=0, z=1),
                         projection=dict(type="perspective")),
-            bgcolor="#e5e5e5",
+            bgcolor="rgba(0,0,0,0)",
         ),
         margin=dict(l=0, r=0, t=0, b=0), height=height,
         paper_bgcolor="rgba(0,0,0,0)",
@@ -911,19 +916,12 @@ with st.sidebar:
     st.divider()
 
     # Country & region selection
-    _FLAG_CODES = {"Saudi Arabia": "sa", "Austria": "at"}
+    _COUNTRY_OPTIONS = list(COUNTRIES.keys())
+    _FLAG_LABELS = {"Saudi Arabia": "\U0001f1f8\U0001f1e6 Saudi Arabia",
+                    "Austria": "\U0001f1e6\U0001f1f9 Austria"}
     selected_country = st.selectbox(
-        "Building Code", list(COUNTRIES.keys()), key="country_select",
-        label_visibility="collapsed",
-    )
-    _fc = _FLAG_CODES[selected_country]
-    st.markdown(
-        f"<div style='display:flex; align-items:center; gap:6px; margin:-18px 0 6px 2px;'>"
-        f"<img src='https://flagcdn.com/w40/{_fc}.png' width='22' "
-        f"style='border-radius:50%; object-fit:cover; aspect-ratio:1; box-shadow:0 1px 3px rgba(0,0,0,0.15);'>"
-        f"<span style='font-size:0.82rem; font-weight:600; color:#240F3E;'>{selected_country}</span>"
-        f"</div>",
-        unsafe_allow_html=True,
+        "Building Code", _COUNTRY_OPTIONS, key="country_select",
+        format_func=lambda c: _FLAG_LABELS.get(c, c),
     )
     country_cfg = COUNTRIES[selected_country]
 

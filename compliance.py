@@ -227,6 +227,26 @@ st.html(f"""
 
   div[data-testid="stDecoration"] {{ display: none; }}
 
+  /* Country flag icons in dropdown (targets lists with exactly 2 options) */
+  [role="option"]:first-child:nth-last-child(2)::before,
+  [role="option"]:last-child:nth-child(2)::before {{
+      content: "";
+      display: inline-block;
+      width: 18px; height: 18px;
+      margin-right: 8px;
+      vertical-align: middle;
+      border-radius: 50%;
+      background-size: cover;
+      background-position: center;
+      flex-shrink: 0;
+  }}
+  [role="option"]:first-child:nth-last-child(2)::before {{
+      background-image: url('https://flagcdn.com/w40/sa.png');
+  }}
+  [role="option"]:last-child:nth-child(2)::before {{
+      background-image: url('https://flagcdn.com/w40/at.png');
+  }}
+
   /* 3D viewer grid background */
   .stPlotlyChart {{
       background-color: #e5e5e5;
@@ -916,12 +936,8 @@ with st.sidebar:
     st.divider()
 
     # Country & region selection
-    _COUNTRY_OPTIONS = list(COUNTRIES.keys())
-    _FLAG_LABELS = {"Saudi Arabia": "\U0001f1f8\U0001f1e6 Saudi Arabia",
-                    "Austria": "\U0001f1e6\U0001f1f9 Austria"}
     selected_country = st.selectbox(
-        "Building Code", _COUNTRY_OPTIONS, key="country_select",
-        format_func=lambda c: _FLAG_LABELS.get(c, c),
+        "Building Code", list(COUNTRIES.keys()), key="country_select",
     )
     country_cfg = COUNTRIES[selected_country]
 

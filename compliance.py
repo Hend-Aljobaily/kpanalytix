@@ -948,11 +948,7 @@ with st.sidebar:
 
     st.divider()
 
-    # Reset comparison when country/region changes
-    _compliance_key = f"{selected_country}_{selected_region}"
-    if st.session_state.get("_last_compliance_key") != _compliance_key:
-        st.session_state.original_result = None
-        st.session_state._last_compliance_key = _compliance_key
+    # Reset comparison when country/region changes (model change handled below)
 
     source = st.radio("Model Source", ["Upload IFC", "Sample Model"],
                        key="model_source", label_visibility="collapsed")
@@ -974,6 +970,12 @@ with st.sidebar:
         if uploaded is not None:
             ifc_bytes = uploaded.getvalue()
             ifc_filename = uploaded.name
+
+    # Reset comparison when country/region/model changes
+    _compliance_key = f"{selected_country}_{selected_region}_{ifc_filename}"
+    if st.session_state.get("_last_compliance_key") != _compliance_key:
+        st.session_state.original_result = None
+        st.session_state._last_compliance_key = _compliance_key
 
     # Layer toggles
     st.divider()
